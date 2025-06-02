@@ -1,4 +1,4 @@
-name: Sync Releases from Xposed-Modules-Repo
+name: 同步 Xposed-Modules-Repo 的 Releases
 
 on:
   schedule:
@@ -10,15 +10,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Repository
+    - name: 检出仓库
       uses: actions/checkout@v4
 
-    - name: Set up Git
+    - name: 配置 Git
       run: |
         git config --global user.name "GitHub Action"
         git config --global user.email "action@github.com"
 
-    - name: Check for New Releases
+    - name: 检查新 Release
       id: check-release
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -29,24 +29,27 @@ jobs:
         
         # 提取版本号
         TAG_NAME=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
-        echo "Latest release tag: $TAG_NAME"
+        echo "最新 Release 版本: $TAG_NAME"
         
         # 检查你的仓库是否已有此版本
         EXISTING_RELEASE=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
           https://api.github.com/repos/klcb2010/wx.repair.tool/releases | jq -r ".[] | select(.tag_name==\"$TAG_NAME\")")
         
         if [ -z "$EXISTING_RELEASE" ]; then
-          echo "New release found: $TAG_NAME"
+          echo "发现新 Release: $TAG_NAME"
           echo "new_release=true" >> $GITHUB_OUTPUT
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
-          echo "release_body=$(echo "$LATEST_RELEASE" | jq -r '.body')" >> $GITHUB_OUTPUT
+          
+          # 清理 Release 说明，移除特殊字符和换行符
+          RELEASE_BODY=$(echo "$LATEST_RELEASE" | jq -r '.body' | tr -d '\n\r' | sed 's/[^[:print:]]//g')
+          echo "release_body=$RELEASE_BODY" >> $GITHUB_OUTPUT
           echo "release_assets=$(echo "$LATEST_RELEASE" | jq -r '.assets[] | .browser_download_url')" >> $GITHUB_OUTPUT
         else
-          echo "No new release found."
+          echo "没有发现新 Release。"
           echo "new_release=false" >> $GITHUB_OUTPUT
         fi
 
-    - name: Download and Sync Release Assets
+    - name: 下载并同步 Release 资产
       if: steps.check-release.outputs.new_release == 'true'
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -69,7 +72,7 @@ jobs:
           release-assets/* \
           --repo klcb2010/wx.repair.tool
 
-    - name: Notify on Failure
+    - name: 失败时通知
       if: failure()
       run: |
-        echo "Sync failed. Please check the logs."
+        echo "同步失败，请检查日志。"
