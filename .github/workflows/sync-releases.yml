@@ -1,3 +1,4 @@
+```yaml
 name: 同步 Xposed-Modules-Repo 的 Releases
 
 on:
@@ -46,12 +47,12 @@ jobs:
           echo "new_release=true" >> $GITHUB_OUTPUT
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
           
-          # 获取原始 Release 说明并保存到文件，避免 shell 解析
+          # 获取原始 Release 说明并保存到文件
           echo "$LATEST_RELEASE" | jq -r '.body' > raw_release_body.txt
           echo "原始 Release 说明已保存到 raw_release_body.txt"
           
-          # 清理 Release 说明，仅保留字母、数字和基本标点，限制长度
-          RELEASE_BODY=$(cat raw_release_body.txt | tr -d '\n\r' | sed 's/[^a-zA-Z0-9.,;:?! -]//g' | head -c 1000)
+          # 清理 Release 说明，仅移除高风险 shell 字符，保留中文和换行
+          RELEASE_BODY=$(cat raw_release_body.txt | sed 's/[|&;<>()$`\\"\']//g' | head -c 5000)
           if [ -z "$RELEASE_BODY" ]; then
             RELEASE_BODY="从目标仓库同步的 Release，版本: $TAG_NAME"
           fi
