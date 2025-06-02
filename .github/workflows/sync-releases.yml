@@ -40,8 +40,8 @@ jobs:
           echo "new_release=true" >> $GITHUB_OUTPUT
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
           
-          # 清理 Release 说明，移除特殊字符和换行符
-          RELEASE_BODY=$(echo "$LATEST_RELEASE" | jq -r '.body' | tr -d '\n\r' | sed 's/[^[:print:]]//g')
+          # 清理 Release 说明，移除换行符、括号和不可打印字符
+          RELEASE_BODY=$(echo "$LATEST_RELEASE" | jq -r '.body' | tr -d '\n\r' | sed 's/[()<>|&;]//g' | sed 's/[^[:print:]]//g' | head -c 1000)
           echo "release_body=$RELEASE_BODY" >> $GITHUB_OUTPUT
           echo "release_assets=$(echo "$LATEST_RELEASE" | jq -r '.assets[] | .browser_download_url')" >> $GITHUB_OUTPUT
         else
@@ -65,10 +65,11 @@ jobs:
           curl -L -o "release-assets/$ASSET_NAME" "$ASSET_URL"
         done
         
-        # 创建新的 Release
+        # 创建新的 Release，使用清理后的说明
+        echo "$RELEASE_BODY" > release_notes.txt
         gh release create "$TAG_NAME" \
           --title "$TAG_NAME" \
-          --notes "$RELEASE_BODY" \
+          --notes-file release_notes.txt \
           release-assets/* \
           --repo klcb2010/wx.repair.tool
 
