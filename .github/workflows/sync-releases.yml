@@ -1,0 +1,75 @@
+name: Sync Releases from Xposed-Modules-Repo
+
+on:
+  schedule:
+    - cron: '*/15 * * * *' # 每15分钟检查一次
+  workflow_dispatch: # 支持手动触发
+
+jobs:
+  sync-releases:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Git
+      run: |
+        git config --global user.name "GitHub Action"
+        git config --global user.email "action@github.com"
+
+    - name: Check for New Releases
+      id: check-release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        # 获取目标仓库最新 Release 信息
+        LATEST_RELEASE=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+          https://api.github.com/repos/Xposed-Modules-Repo/wx.repair.tool/releases/latest)
+        
+        # 提取版本号
+        TAG_NAME=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
+        echo "Latest release tag: $TAG_NAME"
+        
+        # 检查你的仓库是否已有此版本
+        EXISTING_RELEASE=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+          https://api.github.com/repos/klcb2010/wx.repair.tool/releases | jq -r ".[] | select(.tag_name==\"$TAG_NAME\")")
+        
+        if [ -z "$EXISTING_RELEASE" ]; then
+          echo "New release found: $TAG_NAME"
+          echo "new_release=true" >> $GITHUB_OUTPUT
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "release_body=$(echo "$LATEST_RELEASE" | jq -r '.body')" >> $GITHUB_OUTPUT
+          echo "release_assets=$(echo "$LATEST_RELEASE" | jq -r '.assets[] | .browser_download_url')" >> $GITHUB_OUTPUT
+        else
+          echo "No new release found."
+          echo "new_release=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Download and Sync Release Assets
+      if: steps.check-release.outputs.new_release == 'true'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        TAG_NAME=${{ steps.check-release.outputs.tag_name }}
+        RELEASE_BODY=${{ steps.check-release.outputs.release_body }}
+        RELEASE_ASSETS=${{ steps.check-release.outputs.release_assets }}
+        
+        # 下载所有资产
+        mkdir -p release-assets
+        for ASSET_URL in $RELEASE_ASSETS; do
+          ASSET_NAME=$(basename $ASSET_URL)
+          curl -L -o "release-assets/$ASSET_NAME" "$ASSET_URL"
+        done
+        
+        # 创建新的 Release
+        gh release create "$TAG_NAME" \
+          --title "$TAG_NAME" \
+          --notes "$RELEASE_BODY" \
+          release-assets/* \
+          --repo klcb2010/wx.repair.tool
+
+    - name: Notify on Failure
+      if: failure()
+      run: |
+        echo "Sync failed. Please check the logs."
