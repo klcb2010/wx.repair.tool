@@ -36,13 +36,11 @@ jobs:
           exit 1
         fi
         
-        # 提取版本号和 Release 说明
+        # 提取版本号
         TAG_NAME=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
-        RELEASE_BODY=$(echo "$LATEST_RELEASE" | jq -r '.body')
         
-        # 输出 Release 说明
+        # 输出版本号
         echo "最新 Release 版本: $TAG_NAME"
-        echo "原始 Release 说明: $RELEASE_BODY"
 
         # 检查是否已有此版本
         EXISTING_RELEASE=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
@@ -53,88 +51,57 @@ jobs:
           echo "new_release=true" >> $GITHUB_OUTPUT
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
           
-          # 保存原始 Release 说明
-          echo "$LATEST_RELEASE" | jq -r '.body' > raw_release_body.txt
-          echo "原始 Release 说明已保存到 raw_release_body.txt"
-          
-          # 清理 Release 说明，移除不必要的字符
-          RELEASE_BODY=$(echo "$RELEASE_BODY" | sed 's/[|&;<>\`\$\\]//g' | tr -d '\r' | sed 's/$/\n/')
-          if [ -z "$RELEASE_BODY" ]; then
-            RELEASE_BODY="从目标仓库同步的 Release，版本: $TAG_NAME"
-          fi
-          echo "清理后的 Release 说明: $RELEASE_BODY"
-          echo "$RELEASE_BODY" > release_notes.txt
-          
-          # 验证 release_notes.txt 是否生成
-          if [ ! -s release_notes.txt ]; then
-            echo "错误: release_notes.txt 文件为空或未生成"
-            exit 1
-          fi
-          
-          # 保存 release_body 到环境变量（避免直接传递复杂字符串）
-          echo "release_body=$RELEASE_BODY" >> $GITHUB_OUTPUT
-          
           # 检查并获取 Release 资产
           RELEASE_ASSETS=$(echo "$LATEST_RELEASE" | jq -r '.assets[] | .browser_download_url')
-          if [ -z "$RELEASE_ASSETS" ]; then
-            echo "警告: 目标 Release 没有资产文件"
-            echo "release_assets=none" >> $GITHUB_OUTPUT
+
+          # 过滤出 APK 文件的资产链接
+          APK_ASSETS=$(echo "$RELEASE_ASSETS" | grep -i ".apk")
+          if [ -z "$APK_ASSETS" ]; then
+            echo "警告: 目标 Release 没有 APK 文件"
+            echo "apk_assets=none" >> $GITHUB_OUTPUT
           else
-            echo "release_assets=$RELEASE_ASSETS" >> $GITHUB_OUTPUT
+            echo "apk_assets=$APK_ASSETS" >> $GITHUB_OUTPUT
           fi
         else
           echo "没有发现新 Release。"
           echo "new_release=false" >> $GITHUB_OUTPUT
         fi
 
-    - name: 下载并同步 Release 资产
+    - name: 下载并同步 APK 资产
       if: steps.check-release.outputs.new_release == 'true'
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         TAG_NAME=${{ steps.check-release.outputs.tag_name }}
-        RELEASE_ASSETS=${{ steps.check-release.outputs.release_assets }}
+        APK_ASSETS=${{ steps.check-release.outputs.apk_assets }}
         
-        # 检查 release_notes.txt 内容
-        echo "release_notes.txt 内容:"
-        cat release_notes.txt
-        
-        # 检查是否有资产文件
-        if [ "$RELEASE_ASSETS" = "none" ]; then
-          echo "没有资产文件可下载，仍然创建 Release"
-          gh release create "$TAG_NAME" \
-            --title "$TAG_NAME" \
-            --notes-file release_notes.txt \
-            --repo klcb2010/wx.repair.tool
-          if [ $? -ne 0 ]; then
-            echo "错误: 创建 Release 失败"
-            exit 1
-          fi
+        # 检查是否有 APK 文件
+        if [ "$APK_ASSETS" = "none" ]; then
+          echo "没有 APK 文件可下载，跳过同步"
           exit 0
         fi
         
-        # 下载所有资产
+        # 下载所有 APK 资产
         mkdir -p release-assets
-        for ASSET_URL in $RELEASE_ASSETS; do
+        for ASSET_URL in $APK_ASSETS; do
           ASSET_NAME=$(basename "$ASSET_URL")
-          echo "正在下载资产: $ASSET_NAME"
+          echo "正在下载 APK 资产: $ASSET_NAME"
           curl -L -o "release-assets/$ASSET_NAME" "$ASSET_URL"
           if [ $? -ne 0 ]; then
-            echo "错误: 下载资产 $ASSET_NAME 失败"
+            echo "错误: 下载 APK 资产 $ASSET_NAME 失败"
             exit 1
           fi
         done
         
         # 验证资产文件存在
         if [ -z "$(ls release-assets)" ]; then
-          echo "错误: 资产文件下载失败或目录为空"
+          echo "错误: APK 资产文件下载失败或目录为空"
           exit 1
         fi
         
-        # 创建新的 Release
+        # 创建新的 Release 并上传 APK 资产
         gh release create "$TAG_NAME" \
           --title "$TAG_NAME" \
-          --notes-file release_notes.txt \
           release-assets/* \
           --repo klcb2010/wx.repair.tool
         if [ $? -ne 0 ]; then
@@ -146,9 +113,5 @@ jobs:
       if: failure()
       run: |
         echo "同步失败，请检查日志。"
-        echo "原始 Release 说明:"
-        cat raw_release_body.txt || echo "无法显示原始 Release 说明"
-        echo "清理后的 Release 说明:"
-        cat release_notes.txt || echo "无法显示清理后的 Release 说明"
         echo "资产文件列表:"
         ls -l release-assets || echo "无法显示资产文件列表"
