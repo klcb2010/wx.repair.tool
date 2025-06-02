@@ -27,6 +27,12 @@ jobs:
         LATEST_RELEASE=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
           https://api.github.com/repos/Xposed-Modules-Repo/wx.repair.tool/releases/latest)
         
+        # 检查 API 请求是否成功
+        if [ -z "$LATEST_RELEASE" ]; then
+          echo "错误: 无法获取目标仓库的 Release 信息"
+          exit 1
+        fi
+        
         # 提取版本号
         TAG_NAME=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
         echo "最新 Release 版本: $TAG_NAME"
@@ -40,8 +46,11 @@ jobs:
           echo "new_release=true" >> $GITHUB_OUTPUT
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
           
-          # 清理 Release 说明，移除换行符、特殊字符，并限制长度
-          RELEASE_BODY=$(echo "$LATEST_RELEASE" | jq -r '.body' | tr -d '\n\r' | sed 's/[-()<>|&;]//g' | sed 's/[^[:print:]]//g' | head -c 1000)
+          # 清理 Release 说明，移除所有特殊字符并限制长度
+          RELEASE_BODY=$(echo "$LATEST_RELEASE" | jq -r '.body' | tr -d '\n\r' | sed 's/[^a-zA-Z0-9.,;:?! ]//g' | head -c 1000)
+          if [ -z "$RELEASE_BODY" ]; then
+            RELEASE_BODY="从目标仓库同步的 Release，版本: $TAG_NAME"
+          fi
           echo "release_body=$RELEASE_BODY" >> $GITHUB_OUTPUT
           echo "release_assets=$(echo "$LATEST_RELEASE" | jq -r '.assets[] | .browser_download_url')" >> $GITHUB_OUTPUT
         else
@@ -58,6 +67,9 @@ jobs:
         RELEASE_BODY=${{ steps.check-release.outputs.release_body }}
         RELEASE_ASSETS=${{ steps.check-release.outputs.release_assets }}
         
+        # 调试：打印清理后的 Release 说明
+        echo "清理后的 Release 说明: $RELEASE_BODY"
+        
         # 下载所有资产
         mkdir -p release-assets
         for ASSET_URL in $RELEASE_ASSETS; do
@@ -65,8 +77,10 @@ jobs:
           curl -L -o "release-assets/$ASSET_NAME" "$ASSET_URL"
         done
         
-        # 将 Release 说明保存到文件，避免命令行解析错误
+        # 将 Release 说明保存到文件
         echo "$RELEASE_BODY" > release_notes.txt
+        
+        # 创建新的 Release
         gh release create "$TAG_NAME" \
           --title "$TAG_NAME" \
           --notes-file release_notes.txt \
