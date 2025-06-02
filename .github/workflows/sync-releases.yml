@@ -58,7 +58,7 @@ jobs:
           echo "原始 Release 说明已保存到 raw_release_body.txt"
           
           # 清理 Release 说明，移除不必要的字符
-          RELEASE_BODY=$(echo "$RELEASE_BODY" | sed 's/[|&;<>\`\$\\]//g' | tr -d '\r')
+          RELEASE_BODY=$(echo "$RELEASE_BODY" | sed 's/[|&;<>\`\$\\]//g' | tr -d '\r' | sed 's/$/\n/')
           if [ -z "$RELEASE_BODY" ]; then
             RELEASE_BODY="从目标仓库同步的 Release，版本: $TAG_NAME"
           fi
