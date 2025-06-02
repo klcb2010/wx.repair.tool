@@ -51,15 +51,23 @@ jobs:
           echo "$LATEST_RELEASE" | jq -r '.body' > raw_release_body.txt
           echo "原始 Release 说明已保存到 raw_release_body.txt"
           
-          # 清理 Release 说明，仅移除高风险 shell 字符，保留中文和换行
-          RELEASE_BODY=$(cat raw_release_body.txt | sed 's/[|&;<>()$`\\"\']//g' | head -c 5000)
+          # 清理 Release 说明，移除高风险 shell 字符，保留中文、换行和常见标点
+          RELEASE_BODY=$(cat raw_release_body.txt | sed "s/[|&;<>\`\$\\\\]//g" | sed "s/'//g" | head -c 5000)
           if [ -z "$RELEASE_BODY" ]; then
             RELEASE_BODY="从目标仓库同步的 Release，版本: $TAG_NAME"
           fi
           echo "清理后的 Release 说明: $RELEASE_BODY"
           echo "$RELEASE_BODY" > release_notes.txt
           echo "release_body=$RELEASE_BODY" >> $GITHUB_OUTPUT
-          echo "release_assets=$(echo "$LATEST_RELEASE" | jq -r '.assets[] | .browser_download_url')" >> $GITHUB_OUTPUT
+          
+          # 检查并获取 Release 资产
+          RELEASE_ASSETS=$(echo "$LATEST_RELEASE" | jq -r '.assets[] | .browser_download_url')
+          if [ -z "$RELEASE_ASSETS" ]; then
+            echo "警告: 目标 Release 没有资产文件"
+            echo "release_assets=none" >> $GITHUB_OUTPUT
+          else
+            echo "release_assets=$RELEASE_ASSETS" >> $GITHUB_OUTPUT
+          fi
         else
           echo "没有发现新 Release。"
           echo "new_release=false" >> $GITHUB_OUTPUT
@@ -73,14 +81,35 @@ jobs:
         TAG_NAME=${{ steps.check-release.outputs.tag_name }}
         RELEASE_ASSETS=${{ steps.check-release.outputs.release_assets }}
         
+        # 检查是否有资产文件
+        if [ "$RELEASE_ASSETS" = "none" ]; then
+          echo "没有资产文件可下载，仍然创建 Release"
+          gh release create "$TAG_NAME" \
+            --title "$TAG_NAME" \
+            --notes-file release_notes.txt \
+            --repo klcb2010/wx.repair.tool
+          exit 0
+        fi
+        
         # 下载所有资产
         mkdir -p release-assets
         for ASSET_URL in $RELEASE_ASSETS; do
-          ASSET_NAME=$(basename $ASSET_URL)
+          ASSET_NAME=$(basename "$ASSET_URL")
+          echo "正在下载资产: $ASSET_NAME"
           curl -L -o "release-assets/$ASSET_NAME" "$ASSET_URL"
+          if [ $? -ne 0 ]; then
+            echo "错误: 下载资产 $ASSET_NAME 失败"
+            exit 1
+          fi
         done
         
-        # 创建新的 Release，使用保存的文件
+        # 验证资产文件存在
+        if [ -z "$(ls release-assets)" ]; then
+          echo "错误: 资产文件下载失败或目录为空"
+          exit 1
+        fi
+        
+        # 创建新的 Release
         gh release create "$TAG_NAME" \
           --title "$TAG_NAME" \
           --notes-file release_notes.txt \
@@ -92,3 +121,4 @@ jobs:
       run: |
         echo "同步失败，请检查日志。"
         cat raw_release_body.txt || echo "无法显示原始 Release 说明"
+        ls -l release-assets || echo "无法显示资产文件列表"
