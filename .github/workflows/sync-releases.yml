@@ -47,17 +47,25 @@ jobs:
           echo "new_release=true" >> $GITHUB_OUTPUT
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
           
-          # 获取原始 Release 说明并保存到文件
-          echo "$LATEST_RELEASE" | jq -r '.body' > raw_release_body.txt
+          # 获取原始 Release 说明并保存到文件（确保 UTF-8 编码）
+          echo "$LATEST_RELEASE" | jq -r '.body' | iconv -t UTF-8 > raw_release_body.txt
           echo "原始 Release 说明已保存到 raw_release_body.txt"
           
-          # 清理 Release 说明，移除高风险 shell 字符，保留中文、换行和常见标点
-          RELEASE_BODY=$(cat raw_release_body.txt | sed "s/[|&;<>\`\$\\\\]//g" | sed "s/'//g" | head -c 5000)
+          # 清理 Release 说明，移除高风险 shell 字符，保留中文、换行和标点
+          RELEASE_BODY=$(cat raw_release_body.txt | sed 's/[|&;<>\`\$\\]//g' | tr -d '\r' | head -c 5000)
           if [ -z "$RELEASE_BODY" ]; then
             RELEASE_BODY="从目标仓库同步的 Release，版本: $TAG_NAME"
           fi
           echo "清理后的 Release 说明: $RELEASE_BODY"
           echo "$RELEASE_BODY" > release_notes.txt
+          
+          # 验证 release_notes.txt 是否生成
+          if [ ! -s release_notes.txt ]; then
+            echo "错误: release_notes.txt 文件为空或未生成"
+            exit 1
+          fi
+          
+          # 保存 release_body 到环境变量（避免直接传递复杂字符串）
           echo "release_body=$RELEASE_BODY" >> $GITHUB_OUTPUT
           
           # 检查并获取 Release 资产
@@ -81,6 +89,10 @@ jobs:
         TAG_NAME=${{ steps.check-release.outputs.tag_name }}
         RELEASE_ASSETS=${{ steps.check-release.outputs.release_assets }}
         
+        # 检查 release_notes.txt 内容
+        echo "release_notes.txt 内容:"
+        cat release_notes.txt
+        
         # 检查是否有资产文件
         if [ "$RELEASE_ASSETS" = "none" ]; then
           echo "没有资产文件可下载，仍然创建 Release"
@@ -88,6 +100,10 @@ jobs:
             --title "$TAG_NAME" \
             --notes-file release_notes.txt \
             --repo klcb2010/wx.repair.tool
+          if [ $? -ne 0 ]; then
+            echo "错误: 创建 Release 失败"
+            exit 1
+          fi
           exit 0
         fi
         
@@ -115,10 +131,18 @@ jobs:
           --notes-file release_notes.txt \
           release-assets/* \
           --repo klcb2010/wx.repair.tool
+        if [ $? -ne 0 ]; then
+          echo "错误: 创建 Release 失败"
+          exit 1
+        fi
 
     - name: 失败时通知
       if: failure()
       run: |
         echo "同步失败，请检查日志。"
+        echo "原始 Release 说明:"
         cat raw_release_body.txt || echo "无法显示原始 Release 说明"
+        echo "清理后的 Release 说明:"
+        cat release_notes.txt || echo "无法显示清理后的 Release 说明"
+        echo "资产文件列表:"
         ls -l release-assets || echo "无法显示资产文件列表"
