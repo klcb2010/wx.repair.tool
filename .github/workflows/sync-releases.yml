@@ -54,7 +54,7 @@ jobs:
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
           
           # 保存原始 Release 说明
-          echo "$LATEST_RELEASE" | jq -r '.body' | iconv -t UTF-8 > raw_release_body.txt
+          echo "$LATEST_RELEASE" | jq -r '.body' | iconv -f GBK -t UTF-8 > raw_release_body.txt
           echo "原始 Release 说明已保存到 raw_release_body.txt"
           
           # 清理 Release 说明，移除不必要的字符
