@@ -1,45 +1,49 @@
-name: 同步 Xposed-Modules-Repo 的 Releases
+name: 同步 Xposed-Modules-Repo 的 Releases 和 README
 
 on:
   schedule:
-    - cron: '0 * * * *' # 每59分钟检查一次
+    - cron: '0 * * * *' # 每小时执行一次
   workflow_dispatch: # 支持手动触发
 
 jobs:
-  sync-releases:
+  sync-releases-and-readme:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # 确保有权限创建 Release 和提交文件
+      actions: read  # 访问 Actions 和 API
 
     steps:
     - name: 检出仓库
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # 拉取完整历史以便提交
 
     - name: 配置 Git
       run: |
         git config --global user.name "GitHub Action"
         git config --global user.email "action@github.com"
 
+    - name: 安装 jq
+      run: sudo apt-get update && sudo apt-get install -y jq
+
     - name: 检查新 Release
       id: check-release
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        # 获取目标仓库最新 Release 信息
+        echo "检查 Xposed-Modules-Repo/wx.repair.tool 的最新 Release..."
         LATEST_RELEASE=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
           https://api.github.com/repos/Xposed-Modules-Repo/wx.repair.tool/releases/latest)
         
-        # 输出调试信息
-        echo "$LATEST_RELEASE"  # 打印完整的 JSON 返回数据
-        
         # 检查 API 请求是否成功
         if [ -z "$LATEST_RELEASE" ] || echo "$LATEST_RELEASE" | grep -q "Not Found"; then
-          echo "错误: 无法获取目标仓库的 Release 信息，可能仓库不存在或无权限"
+          echo "::error::无法获取目标仓库的 Release 信息，可能仓库不存在或无权限"
           exit 1
         fi
-        
-        # 提取版本号
+
+        # 提取版本号和 Release 信息
         TAG_NAME=$(echo "$LATEST_RELEASE" | jq -r '.tag_name')
-        
-        # 输出版本号
+        RELEASE_NAME=$(echo "$LATEST_RELEASE" | jq -r '.name // .tag_name') # 使用 Release 名称或回退到 tag_name
         echo "最新 Release 版本: $TAG_NAME"
 
         # 检查是否已有此版本
@@ -50,21 +54,48 @@ jobs:
           echo "发现新 Release: $TAG_NAME"
           echo "new_release=true" >> $GITHUB_OUTPUT
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "release_name=$RELEASE_NAME" >> $GITHUB_OUTPUT
           
-          # 检查并获取 Release 资产
+          # 获取 Release 资产
           RELEASE_ASSETS=$(echo "$LATEST_RELEASE" | jq -r '.assets[] | .browser_download_url')
-
-          # 过滤出 APK 文件的资产链接
-          APK_ASSETS=$(echo "$RELEASE_ASSETS" | grep -i ".apk")
+          APK_ASSETS=$(echo "$RELEASE_ASSETS" | grep -i ".apk$")
           if [ -z "$APK_ASSETS" ]; then
-            echo "警告: 目标 Release 没有 APK 文件"
+            echo "::warning::目标 Release 没有 APK 文件"
             echo "apk_assets=none" >> $GITHUB_OUTPUT
           else
             echo "apk_assets=$APK_ASSETS" >> $GITHUB_OUTPUT
           fi
         else
-          echo "没有发现新 Release。"
+          echo "没有发现新 Release，已存在版本: $TAG_NAME"
           echo "new_release=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: 同步 README
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        echo "同步 Xposed-Modules-Repo/wx.repair.tool 的 README..."
+        # 下载目标仓库的 README
+        README_URL="https://raw.githubusercontent.com/Xposed-Modules-Repo/wx.repair.tool/main/README.md"
+        curl -s -L -o README.md "$README_URL" --fail
+        if [ $? -ne 0 ]; then
+          echo "::error::无法下载 README 文件，可能文件不存在或无权限"
+          exit 1
+        fi
+
+        # 检查 README 是否有变化
+        if git diff --quiet README.md; then
+          echo "README 文件没有变化，跳过提交"
+        else
+          echo "检测到 README 文件变化，提交到仓库"
+          git add README.md
+          git commit -m "同步 README from Xposed-Modules-Repo/wx.repair.tool"
+          git push
+          if [ $? -ne 0 ]; then
+            echo "::error::提交 README 失败"
+            exit 1
+          fi
+          echo "README 同步成功"
         fi
 
     - name: 下载并同步 APK 资产
@@ -73,45 +104,58 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         TAG_NAME=${{ steps.check-release.outputs.tag_name }}
+        RELEASE_NAME=${{ steps.check-release.outputs.release_name }}
         APK_ASSETS=${{ steps.check-release.outputs.apk_assets }}
-        
+
         # 检查是否有 APK 文件
         if [ "$APK_ASSETS" = "none" ]; then
-          echo "没有 APK 文件可下载，跳过同步"
+          echo "没有 APK 文件可下载，跳过 Release 同步"
           exit 0
         fi
-        
+
         # 下载所有 APK 资产
         mkdir -p release-assets
         for ASSET_URL in $APK_ASSETS; do
           ASSET_NAME=$(basename "$ASSET_URL")
           echo "正在下载 APK 资产: $ASSET_NAME"
-          curl -L -o "release-assets/$ASSET_NAME" "$ASSET_URL"
+          curl -L -o "release-assets/$ASSET_NAME" "$ASSET_URL" --fail
           if [ $? -ne 0 ]; then
-            echo "错误: 下载 APK 资产 $ASSET_NAME 失败"
+            echo "::error::下载 APK 资产 $ASSET_NAME 失败"
             exit 1
           fi
         done
-        
+
         # 验证资产文件存在
         if [ -z "$(ls release-assets)" ]; then
-          echo "错误: APK 资产文件下载失败或目录为空"
+          echo "::error::APK 资产文件下载失败或目录为空"
           exit 1
         fi
-        
+
         # 创建新的 Release 并上传 APK 资产
+        echo "创建 Release: $TAG_NAME"
         gh release create "$TAG_NAME" \
-          --title "$TAG_NAME" \
+          --title "$RELEASE_NAME" \
+          --notes "自动同步自 Xposed-Modules-Repo/wx.repair.tool 的 Release $TAG_NAME" \
           release-assets/* \
           --repo klcb2010/wx.repair.tool
         if [ $? -ne 0 ]; then
-          echo "错误: 创建 Release 失败"
+          echo "::error::创建 Release 失败"
           exit 1
         fi
+        echo "Release $TAG_NAME 同步成功"
+
+    - name: 清理资产目录
+      if: always()
+      run: |
+        echo "清理 release-assets 目录..."
+        rm -rf release-assets
+        echo "清理完成"
 
     - name: 失败时通知
       if: failure()
       run: |
-        echo "同步失败，请检查日志。"
+        echo "::error::同步失败，请检查日志"
         echo "资产文件列表:"
         ls -l release-assets || echo "无法显示资产文件列表"
+        echo "README 文件状态:"
+        git status README.md || echo "无法显示 README 文件状态"
